@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>PinAR</title>
+
+  <!-- A-Frame then AR.js GPS (pinned release, not master) -->
+  <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+      background: #000;
+    }
+
+    a-scene { position: fixed; inset: 0; z-index: 0; }
+
+    #hud {
+      position: fixed; inset: 0; z-index: 10;
+      pointer-events: none;
+    }
+
+    /* ── Top bar ── */
+    #top-bar {
+      position: absolute; top: 0; left: 0; right: 0;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 52px 20px 12px;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.55), transparent);
+      pointer-events: none;
+    }
+
+    #app-logo {
+      font-size: 18px; font-weight: 700;
+      color: #fff; letter-spacing: -0.3px;
+    }
+
+    #gps-badge {
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(0,0,0,0.4);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 20px; padding: 4px 10px;
+    }
+    #gps-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #ff3b30;
+      transition: background 0.4s;
+    }
+    #gps-dot.active { background: #30d158; }
+    #gps-label {
+      font-size: 11px; font-weight: 500;
+      color: rgba(255,255,255,0.8); letter-spacing: 0.2px;
+    }
+
+    /* ── Nav banner — nearest pin ── */
+    #nav-banner {
+      position: absolute;
+      top: 115px; left: 50%; transform: translateX(-50%);
+      display: none; align-items: center; gap: 8px;
+      background: rgba(0,0,0,0.6);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 20px; padding: 7px 14px;
+      pointer-events: none;
+      white-space: nowrap;
+      backdrop-filter: blur(6px);
+      transition: opacity 0.3s;
+    }
+    #nav-banner.visible { display: flex; }
+    #nav-banner-emoji { font-size: 16px; }
+    #nav-banner-name  { font-size: 13px; font-weight: 600; color: #fff; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+    #nav-banner-dist  { font-size: 13px; color: rgba(255,255,255,0.6); }
+    #nav-banner-arrow { font-size: 14px; display: inline-block; transition: transform 0.3s; }
+
+    /* ── Empty state ── */
+    #empty-state {
+      position: absolute;
+      top: 50%; left: 50%; transform: translate(-50%, -50%);
+      text-align: center; color: rgba(255,255,255,0.55);
+      pointer-events: none;
+    }
+    #empty-state .icon { font-size: 40px; margin-bottom: 10px; }
+    #empty-state p { font-size: 15px; line-height: 1.5; }
+
+    /* ── Compass strip ── */
+    #compass-strip {
+      position: absolute; bottom: 108px; left: 0; right: 0;
+      height: 68px; pointer-events: none;
+    }
+    #compass-canvas { display: block; width: 100%; height: 68px; }
+
+    /* ── Bottom bar ── */
+    #bottom-bar {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 16px 32px 40px;
+      background: linear-gradient(to top, rgba(0,0,0,0.7), transparent);
+      pointer-events: none;
+    }
+
+    #btn-list {
+      position: relative;
+      width: 48px; height: 48px; border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: auto; cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #btn-list svg { width: 20px; height: 20px; stroke: #fff; }
+    #pin-count-badge {
+      position: absolute; top: -4px; right: -4px;
+      min-width: 18px; height: 18px; border-radius: 9px;
+      background: #ff3b30; color: #fff;
+      font-size: 11px; font-weight: 700;
+      display: none; align-items: center; justify-content: center;
+      padding: 0 4px;
+    }
+    #pin-count-badge.visible { display: flex; }
+
+    #btn-add {
+      width: 64px; height: 64px; border-radius: 50%;
+      background: #007aff; border: none;
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: auto; cursor: pointer;
+      box-shadow: 0 4px 20px rgba(0,122,255,0.5);
+      -webkit-tap-highlight-color: transparent;
+      transition: transform 0.15s, background 0.15s;
+    }
+    #btn-add:active { transform: scale(0.94); background: #0062cc; }
+    #btn-add svg { width: 28px; height: 28px; stroke: #fff; stroke-width: 2.5; }
+
+    #btn-info {
+      width: 48px; height: 48px; border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: auto; cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #btn-info svg { width: 20px; height: 20px; stroke: #fff; }
+
+    /* ── Bottom sheet ── */
+    #sheet-overlay {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.5);
+      backdrop-filter: blur(4px);
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.3s;
+      z-index: 20;
+    }
+    #sheet-overlay.visible { opacity: 1; pointer-events: auto; }
+
+    #bottom-sheet {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      background: #1c1c1e;
+      border-radius: 20px 20px 0 0;
+      padding: 12px 20px 40px;
+      transform: translateY(100%);
+      transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+      z-index: 21;
+    }
+    #bottom-sheet.visible { transform: translateY(0); }
+
+    .sheet-handle {
+      width: 36px; height: 4px; border-radius: 2px;
+      background: rgba(255,255,255,0.25);
+      margin: 0 auto 20px;
+    }
+    .sheet-title {
+      font-size: 17px; font-weight: 600; color: #fff;
+      margin-bottom: 20px;
+    }
+
+    /* ── Sheet inner styles (add pin) ── */
+    .pin-name-input {
+      width: 100%; padding: 14px 16px;
+      background: #2c2c2e; border: 1px solid #3a3a3c;
+      border-radius: 12px; color: #fff; font-size: 16px;
+      outline: none; margin-bottom: 16px;
+      transition: border-color 0.2s;
+    }
+    .pin-name-input::placeholder { color: rgba(255,255,255,0.3); }
+    .pin-name-input:focus { border-color: #007aff; }
+    .pin-name-input.shake { animation: shake 0.35s; border-color: #ff453a; }
+
+    .emoji-grid {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px;
+    }
+    .emoji-btn {
+      width: 44px; height: 44px; border-radius: 10px;
+      background: #2c2c2e; border: 1.5px solid transparent;
+      font-size: 22px; cursor: pointer; display: flex;
+      align-items: center; justify-content: center;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .emoji-btn.selected { border-color: #007aff; background: rgba(0,122,255,0.15); }
+
+    .btn-primary {
+      width: 100%; padding: 15px;
+      background: #007aff; border: none; border-radius: 14px;
+      color: #fff; font-size: 17px; font-weight: 600;
+      cursor: pointer; transition: background 0.15s;
+    }
+    .btn-primary:active { background: #0062cc; }
+    .btn-primary.green { background: #30d158; }
+    .btn-primary.green:active { background: #25a244; }
+
+    .coords-hint {
+      text-align: center; font-size: 12px;
+      color: rgba(255,255,255,0.3); margin-bottom: 16px;
+    }
+
+    /* ── Pin list ── */
+    .pin-list { max-height: 60vh; overflow-y: auto; }
+    .pin-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 0; border-bottom: 1px solid #2c2c2e;
+    }
+    .pin-row:last-child { border-bottom: none; }
+    .pin-emoji { font-size: 26px; flex-shrink: 0; }
+    .pin-info { flex: 1; min-width: 0; }
+    .pin-info-name {
+      font-size: 15px; font-weight: 600; color: #fff;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .pin-info-meta { font-size: 12px; color: rgba(255,255,255,0.4); display: flex; gap: 8px; }
+    .pin-dist { color: #007aff; font-weight: 500; }
+    .pin-actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .btn-share  { background: none; border: none; color: #007aff; font-size: 13px; cursor: pointer; padding: 6px 8px; }
+    .btn-delete { background: none; border: none; color: #ff453a; font-size: 13px; cursor: pointer; padding: 6px 8px; }
+
+    /* ── Info sheet ── */
+    .info-row { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid #2c2c2e; }
+    .info-row:last-child { border-bottom: none; }
+    .info-icon { font-size: 22px; width: 30px; text-align: center; }
+    .info-text { flex: 1; font-size: 14px; color: rgba(255,255,255,0.7); line-height: 1.5; }
+
+    /* ── Shared pin confirm sheet ── */
+    .shared-pin-preview {
+      display: flex; align-items: center; gap: 14px;
+      background: #2c2c2e; border-radius: 14px;
+      padding: 16px; margin-bottom: 20px;
+    }
+    .shared-pin-preview .big-emoji { font-size: 40px; }
+    .shared-pin-preview-info {}
+    .shared-pin-preview-name { font-size: 18px; font-weight: 600; color: #fff; }
+    .shared-pin-preview-coords { font-size: 12px; color: rgba(255,255,255,0.4); margin-top: 4px; }
+    .btn-secondary {
+      width: 100%; padding: 15px;
+      background: #2c2c2e; border: none; border-radius: 14px;
+      color: #fff; font-size: 17px; font-weight: 600;
+      cursor: pointer; margin-top: 10px;
+      transition: background 0.15s;
+    }
+    .btn-secondary:active { background: #3a3a3c; }
+
+    /* ── Toast ── */
+    #toast {
+      position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%) translateY(20px);
+      background: rgba(30,30,30,0.95);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px; padding: 10px 18px;
+      font-size: 13px; color: #fff;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.25s, transform 0.25s;
+      white-space: nowrap; z-index: 30;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ── Loading ── */
+    #loading {
+      position: fixed; inset: 0; z-index: 100;
+      background: #000;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 16px;
+      transition: opacity 0.5s;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    #loading-logo { font-size: 32px; font-weight: 700; color: #fff; letter-spacing: -0.5px; }
+    #loading-sub { font-size: 14px; color: rgba(255,255,255,0.4); }
+    .spinner {
+      width: 24px; height: 24px;
+      border: 2px solid rgba(255,255,255,0.15);
+      border-top-color: #007aff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20%       { transform: translateX(-6px); }
+      40%       { transform: translateX( 6px); }
+      60%       { transform: translateX(-4px); }
+      80%       { transform: translateX( 4px); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- AR scene — populated by ARRenderer -->
+  <a-scene
+    id="ar-scene"
+    vr-mode-ui="enabled: false"
+    arjs="sourceType: webcam; videoTexture: true; debugUIEnabled: false"
+    renderer="antialias: true; alpha: true"
+    embedded>
+    <a-camera gps-camera rotation-reader></a-camera>
+  </a-scene>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div id="top-bar">
+      <span id="app-logo">PinAR</span>
+      <div id="gps-badge">
+        <div id="gps-dot"></div>
+        <span id="gps-label">Locating…</span>
+      </div>
+    </div>
+
+    <div id="nav-banner">
+      <span id="nav-banner-arrow">↑</span>
+      <span id="nav-banner-emoji"></span>
+      <span id="nav-banner-name"></span>
+      <span id="nav-banner-dist"></span>
+    </div>
+
+    <div id="empty-state">
+      <div class="icon">📍</div>
+      <p>No pins yet.<br>Tap + to drop your first pin.</p>
+    </div>
+
+    <div id="compass-strip">
+      <canvas id="compass-canvas" height="68"></canvas>
+    </div>
+
+    <div id="bottom-bar">
+      <button id="btn-list" aria-label="My pins">
+        <svg fill="none" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="8" y1="6" x2="21" y2="6"/>
+          <line x1="8" y1="12" x2="21" y2="12"/>
+          <line x1="8" y1="18" x2="21" y2="18"/>
+          <line x1="3" y1="6" x2="3.01" y2="6"/>
+          <line x1="3" y1="12" x2="3.01" y2="12"/>
+          <line x1="3" y1="18" x2="3.01" y2="18"/>
+        </svg>
+        <span id="pin-count-badge"></span>
+      </button>
+
+      <button id="btn-add" aria-label="Add pin">
+        <svg fill="none" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+      </button>
+
+      <button id="btn-info" aria-label="Info">
+        <svg fill="none" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="16" x2="12" y2="12"/>
+          <line x1="12" y1="8" x2="12.01" y2="8"/>
+        </svg>
+      </button>
+    </div>
+
+    <div id="toast"></div>
+  </div>
+
+  <!-- Sheet overlay -->
+  <div id="sheet-overlay"></div>
+  <div id="bottom-sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title" id="sheet-title"></div>
+    <div id="sheet-content"></div>
+  </div>
+
+  <!-- Loading screen -->
+  <div id="loading">
+    <div id="loading-logo">PinAR</div>
+    <div class="spinner"></div>
+    <div id="loading-sub">Starting camera…</div>
+  </div>
+
+  <!-- Modules -->
+  <script src="modules/SensorLayer.js"></script>
+  <script src="modules/PinStore.js"></script>
+  <script src="modules/NavEngine.js"></script>
+  <script src="modules/ARRenderer.js"></script>
+  <script src="modules/UILayer.js"></script>
+  <script src="modules/ShareModule.js"></script>
+  <script src="src/app.js"></script>
+</body>
+</html>
