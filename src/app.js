@@ -8,23 +8,26 @@
   const loadingSub = document.getElementById('loading-sub');
 
   // ── 1. Instantiate modules ────────────────────────────────────────────────
-  const sensor = new SensorLayer();
-  const store  = new PinStore();
-  const share  = new ShareModule(store);
-  const ar     = new ARRenderer(store, sensor);
-  const ui     = new UILayer(store, sensor, share);
+  const sensor  = new SensorLayer();
+  const store   = new PinStore();
+  const share   = new ShareModule(store);
+  const ar      = new ARRenderer(store, sensor);
+  const mapView = new MapView(store, sensor);
+  const ui      = new UILayer(store, sensor, share);
+
+  // Wire MapView into UILayer so tab switching and map callbacks work
+  ui.setMapView(mapView);
 
   // ── 2. Detect incoming shared pin before UI start ─────────────────────────
   let pendingSharedPin = null;
   share.checkIncoming((pin) => { pendingSharedPin = pin; });
 
-  // ── 3. Start UI (no GPS needed) ───────────────────────────────────────────
+  // ── 3. Start modules ──────────────────────────────────────────────────────
   ui.start();
-
-  // ── 4. Start AR renderer ──────────────────────────────────────────────────
   ar.start();
+  mapView.start();
 
-  // ── 5. Request sensors ────────────────────────────────────────────────────
+  // ── 4. Request sensors ────────────────────────────────────────────────────
   loadingSub.textContent = 'Requesting location…';
 
   try {
@@ -36,28 +39,28 @@
     // Don't block — user can browse saved pins without GPS
   }
 
-  // ── 6. Hide loading screen ────────────────────────────────────────────────
+  // ── 5. Hide loading screen ────────────────────────────────────────────────
   await new Promise((r) => setTimeout(r, 500));
   loading.classList.add('hidden');
   setTimeout(() => loading.remove(), 600);
 
-  // ── 7. Show incoming shared pin prompt (custom sheet, not window.confirm) ──
+  // ── 6. Show incoming shared pin prompt ───────────────────────────────────
   if (pendingSharedPin) {
     const pin = pendingSharedPin;
     pendingSharedPin = null;
 
-    // Small delay so the sheet animation has a surface to appear on
     setTimeout(() => {
       ui.promptSharedPin(pin, () => {
-        store.add({ name: pin.name, emoji: pin.emoji, lat: pin.lat, lng: pin.lng });
+        const saved = store.add({ name: pin.name, emoji: pin.emoji, lat: pin.lat, lng: pin.lng });
         ui.toast(`📍 "${pin.name}" saved — look for the arrow!`);
+        ui.startNavigation(saved);
       });
     }, 700);
   }
 
-  // ── 8. Dev helpers ────────────────────────────────────────────────────────
+  // ── 7. Dev helpers ────────────────────────────────────────────────────────
   if (location.hostname === 'localhost') {
-    window._pinar = { sensor, store, share, ar, ui };
+    window._pinar = { sensor, store, share, ar, mapView, ui };
     console.info('[PinAR] Dev mode — window._pinar exposed');
   }
 })();

@@ -3,24 +3,26 @@
  * Owns all DOM interaction. Never does data work directly — delegates to store/share.
  *
  * Responsibilities:
+ *  - Tab switching (AR ↔ Map) and keeping MapView in sync
  *  - Bottom sheet (add pin, pin list, about, shared-pin confirm)
  *  - GPS badge
- *  - Nav banner (nearest pin name + distance + bearing arrow)
- *  - Compass strip (canvas, showing pin directions)
+ *  - Nav banner (nearest pin in passive mode; chosen pin in active navigation)
+ *  - Compass strip (canvas)
  *  - Empty state
  *  - Toast notifications
- *  - Pin count badge on list button
+ *  - Pin count badge on map tab
  */
 class UILayer {
   static EMOJIS = ['📍','🚲','🎒','🍕','🏠','⭐','🏫','🚗','🏋️','☕','🧪','🛒'];
-
-  // Compass strip field-of-view in degrees
   static COMPASS_FOV = 120;
 
   constructor(store, sensor, share) {
     this._store  = store;
     this._sensor = sensor;
     this._share  = share;
+
+    // MapView injected after construction (avoids circular dep)
+    this._mapView = null;
 
     this._overlay    = document.getElementById('sheet-overlay');
     this._sheet      = document.getElementById('bottom-sheet');
@@ -36,16 +38,38 @@ class UILayer {
     this._navEmoji   = document.getElementById('nav-banner-emoji');
     this._navName    = document.getElementById('nav-banner-name');
     this._navDist    = document.getElementById('nav-banner-dist');
+    this._navStopBtn = document.getElementById('nav-stop-btn');
 
-    this._toastTimer    = null;
+    this._toastTimer     = null;
     this._currentHeading = 0;
-    this._compassReady  = false; // becomes true after first heading event
+    this._compassReady   = false;
+
+    // Active navigation state (null = passive "show nearest" mode)
+    this._navPin = null;
+
+    // Which tab is active: 'ar' | 'map'
+    this._activeTab = 'ar';
+  }
+
+  /** Inject MapView reference so UILayer can call show/hide on tab switch. */
+  setMapView(mapView) {
+    this._mapView = mapView;
+
+    // Wire map action callbacks
+    mapView.onNavigate = (pin) => this.startNavigation(pin);
+    mapView.onShare    = (pin) => this._doShare(pin);
+    mapView.onDelete   = (pin) => {
+      this._store.remove(pin.id);
+      this.toast(`🗑 "${pin.name}" removed`);
+    };
   }
 
   start() {
     document.getElementById('btn-add').addEventListener('click',  () => this._onAddTap());
-    document.getElementById('btn-list').addEventListener('click', () => this._openListSheet());
     document.getElementById('btn-info').addEventListener('click', () => this._openInfoSheet());
+    document.getElementById('tab-ar').addEventListener('click',   () => this._switchTab('ar'));
+    document.getElementById('tab-map').addEventListener('click',  () => this._switchTab('map'));
+    this._navStopBtn.addEventListener('click', () => this.stopNavigation());
     this._overlay.addEventListener('click', () => this._closeSheet());
 
     window.addEventListener('sensor:location', (e) => this._onLocation(e.detail));
@@ -53,13 +77,42 @@ class UILayer {
     window.addEventListener('sensor:error',    (e) => this.toast(e.detail.message, 'error'));
     window.addEventListener('pins:changed',    (e) => this._onPinsChanged(e.detail.pins));
 
-    // Size the compass canvas to device pixels
     this._initCompassCanvas();
     window.addEventListener('resize', () => this._initCompassCanvas());
 
-    // Initial render
     this._onPinsChanged(this._store.getAll());
   }
+
+  // ── Tab switching ─────────────────────────────────────────────────────────
+
+  _switchTab(tab) {
+    if (this._activeTab === tab) {
+      // Tapping active map tab again shows pin list sheet
+      if (tab === 'map') this._openListSheet();
+      return;
+    }
+
+    this._activeTab = tab;
+
+    const arBtn  = document.getElementById('tab-ar');
+    const mapBtn = document.getElementById('tab-map');
+    const mapEl  = document.getElementById('map-view');
+
+    if (tab === 'map') {
+      document.body.classList.add('view-map');
+      mapEl.classList.add('visible');
+      arBtn.classList.remove('active');
+      mapBtn.classList.add('active');
+      this._mapView?.show();
+    } else {
+      document.body.classList.remove('view-map');
+      mapEl.classList.remove('visible');
+      mapBtn.classList.remove('active');
+      arBtn.classList.add('active');
+    }
+  }
+
+  // ── Toast ────────────────────────────────────────────────────────────────
 
   toast(msg, type = 'info') {
     clearTimeout(this._toastTimer);
@@ -68,10 +121,8 @@ class UILayer {
     this._toastTimer = setTimeout(() => this._toast.classList.remove('show'), 3200);
   }
 
-  /**
-   * Open the "Someone shared a pin with you" confirmation sheet.
-   * Called from app.js instead of window.confirm().
-   */
+  // ── Shared pin prompt ────────────────────────────────────────────────────
+
   promptSharedPin(pin, onAccept) {
     const coordStr = `${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}`;
 
@@ -84,7 +135,7 @@ class UILayer {
         </div>
       </div>
       <button class="btn-primary green" id="btn-accept-shared">Save &amp; navigate</button>
-      <button class="btn-secondary" id="btn-dismiss-shared">Dismiss</button>
+      <button class="btn-secondary"     id="btn-dismiss-shared">Dismiss</button>
     `);
 
     this._sheetBody.querySelector('#btn-accept-shared').addEventListener('click', () => {
@@ -94,6 +145,31 @@ class UILayer {
     this._sheetBody.querySelector('#btn-dismiss-shared').addEventListener('click', () => {
       this._closeSheet();
     });
+  }
+
+  // ── Active navigation ────────────────────────────────────────────────────
+
+  /**
+   * Start navigating to a specific pin.
+   * The nav banner enters "navigating" mode, showing "Navigating" label + stop button.
+   */
+  startNavigation(pin) {
+    this._navPin = pin;
+    this._navBanner.classList.add('navigating', 'visible');
+    this._navEmoji.textContent = pin.emoji;
+    this._navName.textContent  = pin.name;
+    this._updateNavBannerArrow();
+    this._updateNavDistanceLabel();
+
+    // Switch to AR view so user can see the arrows
+    if (this._activeTab !== 'ar') this._switchTab('ar');
+  }
+
+  /** Stop active navigation, return to passive "nearest pin" mode. */
+  stopNavigation() {
+    this._navPin = null;
+    this._navBanner.classList.remove('navigating');
+    this._updateNavBanner();
   }
 
   // ── GPS badge ────────────────────────────────────────────────────────────
@@ -130,13 +206,25 @@ class UILayer {
     this._badge.textContent = count;
     this._badge.classList.toggle('visible', count > 0);
 
+    // If the pinned navigation target was deleted, stop navigation
+    if (this._navPin && !this._store.getById(this._navPin.id)) {
+      this.stopNavigation();
+    }
+
     this._updateNavBanner();
     this._drawCompass();
   }
 
-  // ── Nav banner (nearest pin) ──────────────────────────────────────────────
+  // ── Nav banner ────────────────────────────────────────────────────────────
 
   _updateNavBanner() {
+    if (this._navPin) {
+      // Active navigation — just refresh the distance
+      this._updateNavDistanceLabel();
+      return;
+    }
+
+    // Passive mode: show nearest pin
     const pos  = this._sensor.position;
     const pins = this._store.getAll();
     const info = NavEngine.nearestPin(pos, pins);
@@ -153,27 +241,41 @@ class UILayer {
     this._updateNavBannerArrow(info.bearing);
   }
 
+  _updateNavDistanceLabel() {
+    if (!this._navPin) return;
+    const pos = this._sensor.position;
+    const nav = NavEngine.computeNav(pos, this._navPin);
+    if (!nav) return;
+
+    this._navDist.textContent = nav.distanceStr;
+    this._updateNavBannerArrow(nav.bearing);
+
+    // Arrived celebration
+    if (nav.arrived) {
+      this.toast(`🎉 You've arrived at "${this._navPin.name}"!`);
+      this._haptic('heavy');
+      this.stopNavigation();
+    }
+  }
+
   _updateNavBannerArrow(pinBearing) {
     if (pinBearing === undefined) {
-      // Recalculate from current nearest pin
+      // Derive from current navPin or nearest pin
       const pos  = this._sensor.position;
-      const pins = this._store.getAll();
-      const info = NavEngine.nearestPin(pos, pins);
-      if (!info) return;
-      pinBearing = info.bearing;
+      const pin  = this._navPin ?? NavEngine.nearestPin(pos, this._store.getAll())?.pin;
+      if (!pos || !pin) return;
+      pinBearing = NavEngine.bearing(pos.lat, pos.lng, pin.lat, pin.lng);
     }
 
     const rel = NavEngine.relativeBearing(pinBearing, this._currentHeading);
-    // Rotate the arrow glyph to point toward the pin relative to current heading
     this._navArrow.style.transform = `rotate(${rel}deg)`;
   }
 
-  // ── Compass strip (canvas) ────────────────────────────────────────────────
+  // ── Compass strip ─────────────────────────────────────────────────────────
 
   _initCompassCanvas() {
     const canvas = document.getElementById('compass-canvas');
     if (!canvas) return;
-    // Match physical pixel ratio for sharp rendering on retina screens
     const dpr = window.devicePixelRatio || 1;
     canvas.width  = canvas.offsetWidth  * dpr;
     canvas.height = canvas.offsetHeight * dpr;
@@ -186,30 +288,28 @@ class UILayer {
     const canvas = document.getElementById('compass-canvas');
     if (!canvas || canvas.width === 0) return;
 
-    const dpr = window.devicePixelRatio || 1;
     const W   = canvas.offsetWidth;
     const H   = canvas.offsetHeight;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, W, H);
 
-    const heading       = this._currentHeading;
-    const FOV           = UILayer.COMPASS_FOV;
-    const pixelsPerDeg  = W / FOV;
-    const centerX       = W / 2;
+    const heading      = this._currentHeading;
+    const FOV          = UILayer.COMPASS_FOV;
+    const pixelsPerDeg = W / FOV;
+    const centerX      = W / 2;
 
-    // Background strip
     const bg = ctx.createLinearGradient(0, 0, 0, H);
     bg.addColorStop(0, 'rgba(0,0,0,0)');
     bg.addColorStop(1, 'rgba(0,0,0,0.55)');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
-    // Compass ticks and cardinal labels
     const cardinals = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
+
     for (let deg = -180; deg <= 180 + FOV; deg += 5) {
       const absolute = ((heading - FOV / 2 + deg) + 360) % 360;
       const roundAbs = Math.round(absolute / 5) * 5 % 360;
-      const x = centerX + (deg - FOV / 2) * pixelsPerDeg;
+      const x        = centerX + (deg - FOV / 2) * pixelsPerDeg;
 
       if (x < -20 || x > W + 20) continue;
 
@@ -220,22 +320,20 @@ class UILayer {
       ctx.beginPath();
       ctx.moveTo(x, H - tickH - 14);
       ctx.lineTo(x, H - 14);
-      ctx.strokeStyle = isMajor
-        ? 'rgba(255,255,255,0.7)'
-        : 'rgba(255,255,255,0.3)';
-      ctx.lineWidth = isMajor ? 1.5 : 1;
+      ctx.strokeStyle = isMajor ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.3)';
+      ctx.lineWidth   = isMajor ? 1.5 : 1;
       ctx.stroke();
 
       if (isCardinal && cardinals[roundAbs]) {
-        ctx.fillStyle  = roundAbs === 0 ? '#ff453a' : 'rgba(255,255,255,0.8)';
-        ctx.font       = `bold 11px -apple-system, sans-serif`;
-        ctx.textAlign  = 'center';
+        ctx.fillStyle    = roundAbs === 0 ? '#ff453a' : 'rgba(255,255,255,0.8)';
+        ctx.font         = `bold 11px -apple-system, sans-serif`;
+        ctx.textAlign    = 'center';
         ctx.textBaseline = 'bottom';
         ctx.fillText(cardinals[roundAbs], x, H - 28);
       }
     }
 
-    // Pin markers on the compass
+    // Pin markers on compass
     const pos  = this._sensor.position;
     const pins = this._store.getAll();
 
@@ -250,13 +348,14 @@ class UILayer {
       const x = centerX + diff * pixelsPerDeg;
       if (x < -10 || x > W + 10) continue;
 
-      // Dot
+      // Highlight the active nav pin
+      const isNav = this._navPin?.id === pin.id;
+
       ctx.beginPath();
-      ctx.arc(x, H - 7, 5, 0, Math.PI * 2);
-      ctx.fillStyle = pin.color;
+      ctx.arc(x, H - 7, isNav ? 6 : 5, 0, Math.PI * 2);
+      ctx.fillStyle = isNav ? '#007aff' : pin.color;
       ctx.fill();
 
-      // Emoji above dot (only when there's horizontal room)
       if (Math.abs(diff) < FOV / 2 + 5) {
         ctx.font         = '13px serif';
         ctx.textAlign    = 'center';
@@ -265,7 +364,7 @@ class UILayer {
       }
     }
 
-    // Centre reticle line
+    // Centre reticle
     ctx.beginPath();
     ctx.moveTo(centerX, 0);
     ctx.lineTo(centerX, H);
@@ -275,7 +374,7 @@ class UILayer {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Centre triangle pointer (your heading)
+    // Heading triangle
     ctx.beginPath();
     ctx.moveTo(centerX - 6, H);
     ctx.lineTo(centerX + 6, H);
@@ -302,9 +401,7 @@ class UILayer {
 
   // ── Add pin sheet ─────────────────────────────────────────────────────────
 
-  /** Called on btn-add tap — also requests compass permission on iOS if needed. */
   _onAddTap() {
-    // Request iOS compass permission on first user gesture
     this._sensor.requestCompassPermission().then((state) => {
       if (state === 'denied') {
         this.toast('Compass access denied — directions may be inaccurate.', 'error');
@@ -358,7 +455,6 @@ class UILayer {
 
     if (!name) {
       nameEl?.classList.remove('shake');
-      // Force reflow to restart animation
       void nameEl?.offsetWidth;
       nameEl?.classList.add('shake');
       nameEl?.addEventListener('animationend', () => nameEl.classList.remove('shake'), { once: true });
@@ -390,7 +486,6 @@ class UILayer {
     this._wireListButtons();
   }
 
-  /** Refresh the list content in-place without re-opening the sheet. */
   _refreshListInPlace() {
     const pins = this._store.getAll();
     if (!pins.length) {
@@ -402,6 +497,25 @@ class UILayer {
   }
 
   _wireListButtons() {
+    this._sheetBody.querySelectorAll('[data-navigate]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id  = btn.dataset.navigate;
+        const pin = this._store.getById(id);
+        if (!pin) return;
+        this._closeSheet();
+        this.startNavigation(pin);
+      });
+    });
+
+    this._sheetBody.querySelectorAll('[data-share]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id  = btn.dataset.share;
+        const pin = this._store.getById(id);
+        if (!pin) return;
+        await this._doShare(pin);
+      });
+    });
+
     this._sheetBody.querySelectorAll('[data-delete]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const id  = btn.dataset.delete;
@@ -412,28 +526,14 @@ class UILayer {
         this._refreshListInPlace();
       });
     });
-
-    this._sheetBody.querySelectorAll('[data-share]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const id  = btn.dataset.share;
-        const pin = this._store.getById(id);
-        if (!pin) return;
-
-        const result = await this._share.share(pin);
-        if (result === 'shared')    this.toast('📤 Shared!');
-        else if (result === 'copied') this.toast('🔗 Link copied!');
-        else if (result === 'failed') this.toast('Could not copy link.', 'error');
-        // 'cancelled' = user dismissed native sheet; no toast needed
-      });
-    });
   }
 
   _listSheetHTML(pins) {
     const pos   = this._sensor.position;
     const items = pins.map((p) => {
-      const nav    = NavEngine.computeNav(pos, p);
-      const dist   = nav ? `<span class="pin-dist">${nav.distanceStr}</span>` : '';
-      const age    = this._timeAgo(p.createdAt);
+      const nav  = NavEngine.computeNav(pos, p);
+      const dist = nav ? `<span class="pin-dist-label">${nav.distanceStr}</span>` : '';
+      const age  = this._timeAgo(p.createdAt);
 
       return `
         <div class="pin-row">
@@ -443,8 +543,9 @@ class UILayer {
             <div class="pin-info-meta">${dist}<span>${age}</span></div>
           </div>
           <div class="pin-actions">
-            <button class="btn-share"  data-share="${p.id}">Share</button>
-            <button class="btn-delete" data-delete="${p.id}">Delete</button>
+            <button class="btn-navigate" data-navigate="${p.id}" title="Navigate">🧭</button>
+            <button class="btn-share"    data-share="${p.id}">Share</button>
+            <button class="btn-delete"   data-delete="${p.id}">Delete</button>
           </div>
         </div>
       `;
@@ -459,20 +560,29 @@ class UILayer {
     this._openSheet('About PinAR', `
       <div class="info-row"><div class="info-icon">📍</div><div class="info-text">Tap <strong style="color:#fff">+</strong> to save your current location as a named pin.</div></div>
       <div class="info-row"><div class="info-icon">↑</div><div class="info-text">Floating arrows in the camera view point toward each saved pin.</div></div>
-      <div class="info-row"><div class="info-icon">🧭</div><div class="info-text">The compass strip at the bottom shows all your pins' directions relative to where you're facing.</div></div>
-      <div class="info-row"><div class="info-icon">🔗</div><div class="info-text">Tap <strong style="color:#fff">Share</strong> on any pin to send a link. Your friend opens it and gets instant AR navigation.</div></div>
-      <div class="info-row"><div class="info-icon">🟢</div><div class="info-text">Arrow turns green when you're within 5 m of the pin.</div></div>
+      <div class="info-row"><div class="info-icon">🧭</div><div class="info-text">The compass strip shows all your pins' directions relative to where you're facing.</div></div>
+      <div class="info-row"><div class="info-icon">🗺</div><div class="info-text">Tap <strong style="color:#fff">Map</strong> to see all pins on a satellite map. Tap Map again to list your pins.</div></div>
+      <div class="info-row"><div class="info-icon">🔗</div><div class="info-text">Tap <strong style="color:#fff">Share</strong> on any pin to send a link — recipients open it and get instant AR navigation.</div></div>
+      <div class="info-row"><div class="info-icon">🟢</div><div class="info-text">Arrow and banner turn green when you're within 5 m of your destination.</div></div>
       <div class="info-row"><div class="info-icon">🔒</div><div class="info-text">All data stored locally on your device. No account, no backend.</div></div>
     `);
   }
 
-  // ── Haptic feedback ───────────────────────────────────────────────────────
+  // ── Haptic ────────────────────────────────────────────────────────────────
 
   _haptic(style = 'light') {
-    // Vibration API — supported on Android, ignored on iOS (uses Haptic Engine natively)
     if (!navigator.vibrate) return;
     const patterns = { light: [10], medium: [20], heavy: [30, 10, 30] };
     navigator.vibrate(patterns[style] ?? patterns.light);
+  }
+
+  // ── Share helper ──────────────────────────────────────────────────────────
+
+  async _doShare(pin) {
+    const result = await this._share.share(pin);
+    if (result === 'shared')    this.toast('📤 Shared!');
+    else if (result === 'copied') this.toast('🔗 Link copied!');
+    else if (result === 'failed') this.toast('Could not copy link.', 'error');
   }
 
   // ── Utils ─────────────────────────────────────────────────────────────────
@@ -484,10 +594,10 @@ class UILayer {
 
   _timeAgo(ts) {
     const m = Math.floor((Date.now() - ts) / 60_000);
-    if (m < 1)   return 'Just now';
-    if (m < 60)  return `${m} min ago`;
+    if (m < 1)  return 'Just now';
+    if (m < 60) return `${m} min ago`;
     const h = Math.floor(m / 60);
-    if (h < 24)  return `${h} hr ago`;
+    if (h < 24) return `${h} hr ago`;
     return `${Math.floor(h / 24)} days ago`;
   }
 }
