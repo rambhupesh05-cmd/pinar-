@@ -142,9 +142,9 @@ class MapView {
   }
 
   _buildPopupHTML(pin) {
-    const pos    = this._sensor.position;
-    const nav    = pos ? NavEngine.computeNav(pos, pin) : null;
-    const meta   = nav ? `${nav.distanceStr} away` : pin.emoji;
+    const pos  = this._sensor.position;
+    const nav  = pos ? NavEngine.computeNav(pos, pin) : null;
+    const meta = nav ? `${nav.distanceStr} away` : 'Tap to navigate';
 
     return `
       <div class="popup-inner">
@@ -156,9 +156,9 @@ class MapView {
           </div>
         </div>
         <div class="popup-actions">
-          <button class="popup-btn nav  js-nav">Navigate</button>
-          <button class="popup-btn      js-share">Share</button>
-          <button class="popup-btn del  js-del">Delete</button>
+          <button class="popup-btn nav js-nav"><span class="btn-icon">🧭</span>Navigate in AR</button>
+          <button class="popup-btn     js-share"><span class="btn-icon">🔗</span>Share link</button>
+          <button class="popup-btn del js-del"><span class="btn-icon">🗑</span>Delete pin</button>
         </div>
       </div>`;
   }

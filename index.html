@@ -4,7 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#000000" />
+  <link rel="manifest" href="manifest.json" />
   <title>PinAR</title>
 
   <!-- Leaflet map -->
@@ -15,23 +18,46 @@
   <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.js"></script>
 
   <style>
+    /* ═══ Design tokens ═══════════════════════════════════════════════════════ */
+    :root {
+      --bg-primary:     #000000;
+      --bg-elevated:    #1c1c1e;
+      --bg-card:        #2c2c2e;
+      --bg-glass:       rgba(14,14,16,0.82);
+      --border-subtle:  rgba(255,255,255,0.08);
+      --border-medium:  rgba(255,255,255,0.14);
+      --text-primary:   #ffffff;
+      --text-secondary: rgba(255,255,255,0.5);
+      --text-tertiary:  rgba(255,255,255,0.3);
+      --accent-blue:    #0a84ff;
+      --accent-green:   #32d74b;
+      --accent-red:     #ff453a;
+      --tab-h:          90px;
+    }
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     html, body {
       width: 100%; height: 100%; overflow: hidden;
-      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
-      background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif;
+      background: var(--bg-primary);
+      -webkit-font-smoothing: antialiased;
     }
 
     /* ─── Layer stack ─────────────────────────────────────────────────────── */
-    a-scene   { position: fixed; inset: 0; z-index: 0; }
-    #map-view { position: fixed; inset: 0; bottom: 83px; z-index: 15; display: none; }
+    a-scene {
+      position: fixed; inset: 0; z-index: 0;
+    }
+    #map-view {
+      position: fixed; inset: 0; bottom: var(--tab-h);
+      z-index: 15; display: none;
+    }
     #map-view.visible { display: block; }
     #map-container { width: 100%; height: 100%; }
 
     #hud { position: fixed; inset: 0; z-index: 18; pointer-events: none; }
 
-    /* AR HUD elements hidden in map view */
+    /* AR-only HUD elements: hide in map view */
     body.view-map #compass-strip,
     body.view-map #empty-state,
     body.view-map #nav-banner { display: none !important; }
@@ -40,223 +66,365 @@
     #top-bar {
       position: absolute; top: 0; left: 0; right: 0;
       display: flex; justify-content: space-between; align-items: center;
-      padding: 52px 20px 12px;
-      background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);
+      padding: 54px 16px 14px;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.65) 0%, transparent 100%);
       pointer-events: none;
     }
     #app-logo {
-      font-size: 19px; font-weight: 800; color: #fff;
-      letter-spacing: -0.5px;
+      font-size: 20px; font-weight: 800; color: var(--text-primary);
+      letter-spacing: -0.8px;
     }
     #top-bar-right {
       display: flex; align-items: center; gap: 8px;
       pointer-events: auto;
     }
+
+    /* GPS badge */
     #gps-badge {
-      display: flex; align-items: center; gap: 6px;
-      background: rgba(0,0,0,0.45); backdrop-filter: blur(10px);
-      border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 20px; padding: 5px 10px;
+      display: flex; align-items: center; gap: 7px;
+      background: var(--bg-glass); backdrop-filter: blur(16px) saturate(180%);
+      border: 1px solid var(--border-medium);
+      border-radius: 20px; padding: 7px 12px; height: 36px;
     }
     #gps-dot {
-      width: 7px; height: 7px; border-radius: 50%;
-      background: #ff3b30; transition: background 0.4s;
+      width: 9px; height: 9px; border-radius: 50%;
+      background: var(--accent-red);
+      transition: background 0.4s;
+      flex-shrink: 0;
     }
-    #gps-dot.active { background: #30d158; }
-    #gps-label { font-size: 11px; font-weight: 500; color: rgba(255,255,255,0.85); }
+    #gps-dot.locating {
+      animation: pulse-locating 1.2s ease-in-out infinite;
+    }
+    #gps-dot.active { background: var(--accent-green); animation: none; }
+    #gps-dot.weak   { background: #ff9f0a; animation: none; }
+    #gps-label {
+      font-size: 12px; font-weight: 500;
+      color: rgba(255,255,255,0.88); letter-spacing: -0.1px;
+    }
 
+    /* Info button — 44×44 touch target */
     #btn-info {
-      width: 32px; height: 32px; border-radius: 50%;
-      background: rgba(0,0,0,0.45); backdrop-filter: blur(10px);
-      border: 1px solid rgba(255,255,255,0.15);
+      width: 44px; height: 44px; border-radius: 50%;
+      background: var(--bg-glass); backdrop-filter: blur(16px) saturate(180%);
+      border: 1px solid var(--border-medium);
       display: flex; align-items: center; justify-content: center;
       cursor: pointer; -webkit-tap-highlight-color: transparent;
+      transition: background 0.15s;
     }
-    #btn-info svg { width: 16px; height: 16px; stroke: rgba(255,255,255,0.8); }
+    #btn-info:active { background: rgba(255,255,255,0.1); }
+    #btn-info svg { width: 18px; height: 18px; stroke: rgba(255,255,255,0.85); }
 
     /* ─── Nav banner ──────────────────────────────────────────────────────── */
     #nav-banner {
-      position: absolute; top: 115px; left: 50%; transform: translateX(-50%);
-      display: none; align-items: center; gap: 7px;
-      background: rgba(0,0,0,0.6); backdrop-filter: blur(12px);
-      border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 22px; padding: 8px 14px;
-      white-space: nowrap; transition: background 0.3s, border-color 0.3s;
-    }
-    #nav-banner.visible { display: flex; }
-    #nav-banner.navigating {
-      background: rgba(0,122,255,0.25);
-      border-color: rgba(0,122,255,0.5);
-      pointer-events: auto;
-    }
-    #nav-banner-arrow { font-size: 15px; display: inline-block; transition: transform 0.25s; }
-    #nav-banner-emoji { font-size: 15px; }
-    #nav-banner-label { font-size: 11px; font-weight: 600; color: #007aff; letter-spacing: 0.3px; display: none; }
-    #nav-banner.navigating #nav-banner-label { display: inline; }
-    #nav-banner-name { font-size: 13px; font-weight: 600; color: #fff; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
-    #nav-banner-dist { font-size: 13px; color: rgba(255,255,255,0.55); }
-    #nav-stop-btn {
-      background: none; border: none; color: rgba(255,255,255,0.55);
-      font-size: 14px; cursor: pointer; padding: 0 0 0 2px; line-height: 1;
+      position: absolute; top: 118px; left: 14px; right: 14px;
       display: none;
+      background: var(--bg-glass); backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid var(--border-medium);
+      border-radius: 20px; padding: 11px 12px;
+      transition: background 0.3s, border-color 0.3s, box-shadow 0.3s;
     }
-    #nav-banner.navigating #nav-stop-btn { display: inline-block; }
+    #nav-banner.visible { display: flex; align-items: center; gap: 10px; }
+    /* Whole banner is tappable whenever visible */
+    #nav-banner.visible { pointer-events: auto; }
+    #nav-banner.visible:not(.navigating) { cursor: pointer; }
+    #nav-banner.visible:not(.navigating):active { background: rgba(255,255,255,0.06); }
+
+    #nav-banner.navigating {
+      background: rgba(10,132,255,0.18);
+      border-color: rgba(10,132,255,0.38);
+      box-shadow: 0 0 0 1px rgba(10,132,255,0.12);
+    }
+
+    /* Arrived flash state */
+    #nav-banner.arrived {
+      background: rgba(50,215,75,0.18);
+      border-color: rgba(50,215,75,0.4);
+      box-shadow: 0 0 0 1px rgba(50,215,75,0.15), 0 4px 20px rgba(50,215,75,0.1);
+    }
+    #nav-banner.arrived #nav-banner-arrow {
+      background: rgba(50,215,75,0.18);
+    }
+
+    /* Directional chevron box */
+    #nav-banner-arrow {
+      width: 42px; height: 42px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(255,255,255,0.07); border-radius: 13px;
+      transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    #nav-banner-arrow svg {
+      width: 22px; height: 22px;
+      stroke: #fff; fill: none; stroke-width: 2.5;
+      stroke-linecap: round; stroke-linejoin: round;
+    }
+
+    /* Text content */
+    #nav-banner-content { flex: 1; min-width: 0; }
+    #nav-banner-top {
+      display: flex; align-items: center; gap: 5px; margin-bottom: 4px;
+    }
+    #nav-banner-emoji { font-size: 14px; flex-shrink: 0; }
+    #nav-banner-name {
+      font-size: 15px; font-weight: 700; color: var(--text-primary);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #nav-banner-label {
+      font-size: 9px; font-weight: 700; color: var(--accent-blue);
+      letter-spacing: 0.6px; text-transform: uppercase;
+      background: rgba(10,132,255,0.18); border-radius: 4px; padding: 2px 5px;
+      display: none; flex-shrink: 0;
+    }
+    #nav-banner.navigating #nav-banner-label { display: block; }
+
+    #nav-banner-bottom { display: flex; align-items: center; gap: 8px; }
+    #nav-banner-dist { font-size: 13px; color: var(--text-secondary); flex-shrink: 0; }
+
+    /* Progress bar — only visible during active navigation */
+    #nav-progress-track {
+      flex: 1; height: 3px; border-radius: 2px;
+      background: rgba(255,255,255,0.1); display: none; overflow: hidden;
+    }
+    #nav-banner.navigating #nav-progress-track { display: block; }
+    #nav-progress-fill {
+      height: 100%; width: 0%; border-radius: 2px;
+      background: linear-gradient(to right, rgba(10,132,255,0.6), var(--accent-blue));
+      transition: width 0.5s ease;
+    }
+
+    /* Start button (passive state — tap banner to navigate) */
+    #nav-start-btn {
+      width: 32px; height: 32px; flex-shrink: 0;
+      background: rgba(255,255,255,0.07); border: none; border-radius: 50%;
+      color: rgba(255,255,255,0.45); cursor: pointer;
+      display: none; align-items: center; justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+      transition: background 0.15s;
+    }
+    #nav-start-btn svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+    #nav-start-btn:active { background: rgba(255,255,255,0.18); }
+    #nav-banner.visible:not(.navigating) #nav-start-btn { display: flex; }
+
+    /* Stop button */
+    #nav-stop-btn {
+      width: 32px; height: 32px; flex-shrink: 0;
+      background: rgba(255,255,255,0.08); border: none; border-radius: 50%;
+      color: var(--text-secondary); cursor: pointer;
+      display: none; align-items: center; justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+      transition: background 0.15s;
+    }
+    #nav-stop-btn svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+    #nav-stop-btn:active { background: rgba(255,255,255,0.18); }
+    #nav-banner.navigating #nav-stop-btn { display: flex; }
 
     /* ─── Empty state ─────────────────────────────────────────────────────── */
     #empty-state {
-      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-      text-align: center; color: rgba(255,255,255,0.5); pointer-events: none;
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -62%);
+      text-align: center; pointer-events: none; padding: 0 36px;
     }
-    #empty-state .icon { font-size: 44px; margin-bottom: 12px; }
-    #empty-state p { font-size: 15px; line-height: 1.6; }
+    .empty-icon { font-size: 52px; margin-bottom: 18px; display: block; }
+    .empty-title {
+      font-size: 20px; font-weight: 700; color: var(--text-primary);
+      margin-bottom: 10px; letter-spacing: -0.3px;
+    }
+    .empty-body {
+      font-size: 15px; color: var(--text-secondary); line-height: 1.65;
+    }
+    .empty-body strong { color: rgba(255,255,255,0.7); font-weight: 600; }
+    .empty-arrow {
+      font-size: 22px; color: var(--text-tertiary); margin-top: 28px; display: block;
+      animation: bounce-down 1.8s ease-in-out infinite;
+    }
 
-    /* ─── Compass strip ───────────────────────────────────────────────────── */
+    /* ─── Compass pill ────────────────────────────────────────────────────── */
     #compass-strip {
-      position: absolute; bottom: 93px; left: 0; right: 0;
-      height: 68px; pointer-events: none;
+      position: absolute;
+      bottom: calc(var(--tab-h) + 18px);
+      left: 50%; transform: translateX(-50%);
+      width: min(268px, 74vw); height: 46px;
+      border-radius: 23px;
+      background: var(--bg-glass);
+      backdrop-filter: blur(18px) saturate(180%);
+      border: 1px solid var(--border-medium);
+      overflow: hidden; pointer-events: none;
     }
-    #compass-canvas { display: block; width: 100%; height: 68px; }
+    #compass-canvas { display: block; width: 100%; height: 46px; }
 
     /* ─── Tab bar ─────────────────────────────────────────────────────────── */
     #tab-bar {
       position: fixed; bottom: 0; left: 0; right: 0;
-      height: 83px;
-      display: flex; align-items: center; justify-content: space-around;
-      padding: 0 20px 28px;
-      background: rgba(14,14,16,0.92);
-      backdrop-filter: blur(24px) saturate(180%);
-      border-top: 1px solid rgba(255,255,255,0.08);
-      z-index: 20;
+      height: var(--tab-h);
+      display: flex; align-items: flex-start; justify-content: space-around;
+      padding-top: 10px;
+      padding-bottom: max(28px, env(safe-area-inset-bottom, 28px));
+      background: rgba(10,10,12,0.94);
+      backdrop-filter: blur(28px) saturate(200%);
+      border-top: 1px solid var(--border-subtle);
+      z-index: 20; position: fixed;
     }
+
+    /* Sliding active indicator at top of tab bar */
+    #tab-indicator {
+      position: absolute; top: 0;
+      height: 2px; width: 50px;
+      background: var(--accent-blue);
+      border-radius: 0 0 2px 2px;
+      transition: left 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+      left: 0;
+    }
+
     .tab-btn {
-      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
       background: none; border: none;
-      color: rgba(255,255,255,0.4);
-      font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
-      cursor: pointer; padding: 4px 24px;
+      color: rgba(255,255,255,0.35);
+      font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
+      cursor: pointer; padding: 4px 20px;
       -webkit-tap-highlight-color: transparent;
       transition: color 0.2s;
+      min-width: 60px;
     }
-    .tab-btn svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-    .tab-btn.active { color: #007aff; }
+    .tab-btn svg {
+      width: 23px; height: 23px; stroke: currentColor;
+      fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+    }
+    .tab-btn.active { color: var(--accent-blue); }
 
     #tab-map { position: relative; }
     .tab-badge {
-      position: absolute; top: 0; right: 12px;
-      min-width: 16px; height: 16px; border-radius: 8px;
-      background: #ff3b30; color: #fff;
+      position: absolute; top: 0; right: 8px;
+      min-width: 17px; height: 17px; border-radius: 9px;
+      background: var(--accent-blue); color: #fff;
       font-size: 10px; font-weight: 700;
-      display: none; align-items: center; justify-content: center; padding: 0 3px;
+      display: none; align-items: center; justify-content: center; padding: 0 4px;
+      border: 1.5px solid rgba(10,10,12,0.94);
     }
     .tab-badge.visible { display: flex; }
 
+    /* + Add button */
     #btn-add {
-      width: 56px; height: 56px; border-radius: 50%;
-      background: #007aff; border: none;
+      width: 58px; height: 58px; border-radius: 50%;
+      background: var(--accent-blue); border: none;
       display: flex; align-items: center; justify-content: center;
-      cursor: pointer;
-      box-shadow: 0 4px 20px rgba(0,122,255,0.45);
+      cursor: pointer; margin-top: -4px;
+      box-shadow: 0 4px 22px rgba(10,132,255,0.5), inset 0 1px 0 rgba(255,255,255,0.22);
       -webkit-tap-highlight-color: transparent;
-      transition: transform 0.15s, background 0.15s;
+      transition: transform 0.14s, background 0.14s, box-shadow 0.14s;
     }
-    #btn-add:active { transform: scale(0.92); background: #0062cc; }
-    #btn-add svg { width: 24px; height: 24px; stroke: #fff; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    #btn-add:active {
+      transform: scale(0.88);
+      background: #0071e3;
+      box-shadow: 0 2px 12px rgba(10,132,255,0.4);
+    }
+    #btn-add svg {
+      width: 28px; height: 28px; stroke: #fff;
+      stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round;
+    }
 
     /* ─── Map overlay controls ────────────────────────────────────────────── */
     #btn-recenter {
       position: absolute; bottom: 24px; right: 16px;
       width: 46px; height: 46px; border-radius: 50%;
-      background: rgba(22,22,24,0.9); backdrop-filter: blur(12px);
-      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(18,18,20,0.92); backdrop-filter: blur(16px);
+      border: 1px solid var(--border-medium);
       display: flex; align-items: center; justify-content: center;
       cursor: pointer; z-index: 1000;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+      box-shadow: 0 2px 16px rgba(0,0,0,0.45);
       -webkit-tap-highlight-color: transparent;
+      transition: background 0.15s;
     }
-    #btn-recenter svg { width: 20px; height: 20px; stroke: rgba(255,255,255,0.85); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    #btn-recenter:active { background: rgba(40,40,44,0.95); }
+    #btn-recenter svg {
+      width: 20px; height: 20px; stroke: rgba(255,255,255,0.85);
+      fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+    }
 
-    /* ─── Leaflet theme overrides ──────────────────────────────────────────── */
+    /* ─── Leaflet overrides ───────────────────────────────────────────────── */
     .leaflet-control-zoom a {
-      background: rgba(22,22,24,0.9) !important;
+      background: rgba(18,18,20,0.92) !important;
       color: rgba(255,255,255,0.8) !important;
-      border-color: rgba(255,255,255,0.12) !important;
+      border-color: var(--border-medium) !important;
       backdrop-filter: blur(12px);
     }
     .leaflet-control-zoom a:hover { background: rgba(40,40,44,0.95) !important; }
-    .leaflet-bar { border: none !important; box-shadow: 0 2px 12px rgba(0,0,0,0.4) !important; }
+    .leaflet-bar { border: none !important; box-shadow: 0 2px 14px rgba(0,0,0,0.45) !important; }
     .leaflet-control-attribution {
-      background: rgba(0,0,0,0.5) !important;
-      color: rgba(255,255,255,0.3) !important;
-      backdrop-filter: blur(8px);
+      background: rgba(0,0,0,0.52) !important;
+      color: rgba(255,255,255,0.28) !important;
+      backdrop-filter: blur(8px); font-size: 9px !important;
     }
-    .leaflet-control-attribution a { color: rgba(255,255,255,0.4) !important; }
+    .leaflet-control-attribution a { color: rgba(255,255,255,0.38) !important; }
 
     /* ─── Map pin markers ─────────────────────────────────────────────────── */
     .map-pin-wrap {
       display: flex; flex-direction: column; align-items: center;
-      filter: drop-shadow(0 3px 8px rgba(0,0,0,0.45));
+      filter: drop-shadow(0 4px 10px rgba(0,0,0,0.5));
     }
     .map-pin-dot {
-      width: 42px; height: 42px; border-radius: 50%;
+      width: 44px; height: 44px; border-radius: 50%;
       background: var(--pin-color);
       display: flex; align-items: center; justify-content: center;
-      border: 2.5px solid rgba(255,255,255,0.35);
+      border: 2.5px solid rgba(255,255,255,0.38);
     }
-    .map-pin-emoji { font-size: 19px; line-height: 1; }
+    .map-pin-emoji { font-size: 20px; line-height: 1; }
     .map-pin-tip {
       width: 0; height: 0;
       border-left: 7px solid transparent;
       border-right: 7px solid transparent;
-      border-top: 10px solid var(--pin-color);
+      border-top: 11px solid var(--pin-color);
       margin-top: -1px;
     }
 
     /* ─── User dot ────────────────────────────────────────────────────────── */
     .user-dot {
       width: 20px; height: 20px; border-radius: 50%;
-      background: #007aff; border: 3px solid #fff;
-      box-shadow: 0 0 0 0 rgba(0,122,255,0.45);
+      background: var(--accent-blue); border: 3px solid #fff;
+      box-shadow: 0 0 0 0 rgba(10,132,255,0.45);
       animation: pulse-dot 2.2s infinite;
     }
     @keyframes pulse-dot {
-      0%   { box-shadow: 0 0 0 0   rgba(0,122,255,0.5); }
-      70%  { box-shadow: 0 0 0 14px rgba(0,122,255,0);   }
-      100% { box-shadow: 0 0 0 0   rgba(0,122,255,0);   }
+      0%   { box-shadow: 0 0 0 0   rgba(10,132,255,0.5); }
+      70%  { box-shadow: 0 0 0 14px rgba(10,132,255,0);   }
+      100% { box-shadow: 0 0 0 0   rgba(10,132,255,0);   }
     }
 
     /* ─── Map popups ──────────────────────────────────────────────────────── */
     .pinar-popup .leaflet-popup-content-wrapper {
-      background: #1c1c1e;
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 18px;
-      box-shadow: 0 8px 36px rgba(0,0,0,0.55);
-      padding: 0;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-medium);
+      border-radius: 20px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+      padding: 0; overflow: hidden;
     }
     .pinar-popup .leaflet-popup-content { margin: 0; }
     .pinar-popup .leaflet-popup-tip-container { display: none; }
     .pinar-popup .leaflet-popup-close-button { display: none; }
 
-    .popup-inner { padding: 16px; }
-    .popup-header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-    .popup-big-emoji { font-size: 30px; line-height: 1; }
-    .popup-title { font-size: 16px; font-weight: 700; color: #fff; }
-    .popup-meta  { font-size: 12px; color: rgba(255,255,255,0.4); margin-top: 2px; }
-    .popup-actions { display: flex; gap: 8px; }
+    .popup-inner { padding: 16px 16px 12px; }
+    .popup-header { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+    .popup-big-emoji { font-size: 32px; line-height: 1; flex-shrink: 0; }
+    .popup-title { font-size: 17px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.2px; }
+    .popup-meta  { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
+
+    /* Stacked popup actions */
+    .popup-actions { display: flex; flex-direction: column; gap: 7px; }
     .popup-btn {
-      flex: 1; padding: 9px 6px;
-      border: none; border-radius: 11px;
-      font-size: 12px; font-weight: 600; cursor: pointer;
-      background: #2c2c2e; color: #007aff;
-      transition: background 0.15s; white-space: nowrap;
+      width: 100%; padding: 12px 14px;
+      border: none; border-radius: 12px;
+      font-size: 14px; font-weight: 600; cursor: pointer;
+      background: var(--bg-card); color: var(--accent-blue);
+      text-align: left; display: flex; align-items: center; gap: 8px;
+      transition: background 0.15s; -webkit-tap-highlight-color: transparent;
     }
     .popup-btn:active { background: #3a3a3c; }
-    .popup-btn.nav  { color: #30d158; }
-    .popup-btn.del  { color: #ff453a; }
+    .popup-btn .btn-icon { font-size: 16px; }
+    .popup-btn.nav  { color: var(--accent-green); }
+    .popup-btn.del  { color: var(--accent-red); }
 
     /* ─── Bottom sheet ────────────────────────────────────────────────────── */
     #sheet-overlay {
       position: fixed; inset: 0;
-      background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+      background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
       opacity: 0; pointer-events: none;
       transition: opacity 0.3s; z-index: 25;
     }
@@ -264,151 +432,202 @@
 
     #bottom-sheet {
       position: fixed; left: 0; right: 0; bottom: 0;
-      background: #1c1c1e; border-radius: 22px 22px 0 0;
-      padding: 12px 20px 48px;
+      background: var(--bg-elevated); border-radius: 24px 24px 0 0;
+      padding: 10px 20px max(44px, env(safe-area-inset-bottom, 44px));
       transform: translateY(100%);
-      transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
-      z-index: 26;
-      max-height: 90vh; overflow-y: auto;
+      transition: transform 0.36s cubic-bezier(0.32, 0.72, 0, 1);
+      z-index: 26; max-height: 90vh; overflow-y: auto;
+      border-top: 1px solid var(--border-subtle);
     }
     #bottom-sheet.visible { transform: translateY(0); }
 
     .sheet-handle {
       width: 36px; height: 4px; border-radius: 2px;
-      background: rgba(255,255,255,0.2); margin: 0 auto 20px;
+      background: rgba(255,255,255,0.22); margin: 0 auto 18px;
     }
-    .sheet-title { font-size: 17px; font-weight: 700; color: #fff; margin-bottom: 20px; }
+    .sheet-title {
+      font-size: 18px; font-weight: 700; color: var(--text-primary);
+      margin-bottom: 20px; letter-spacing: -0.3px;
+    }
 
     /* ─── Sheet: add pin ──────────────────────────────────────────────────── */
     .pin-name-input {
       width: 100%; padding: 14px 16px;
-      background: #2c2c2e; border: 1px solid #3a3a3c;
-      border-radius: 13px; color: #fff; font-size: 16px;
+      background: var(--bg-card); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px; color: var(--text-primary); font-size: 16px;
       outline: none; margin-bottom: 16px; transition: border-color 0.2s;
+      -webkit-appearance: none;
     }
-    .pin-name-input::placeholder { color: rgba(255,255,255,0.25); }
-    .pin-name-input:focus { border-color: #007aff; }
-    .pin-name-input.shake { animation: shake 0.35s; border-color: #ff453a; }
+    .pin-name-input::placeholder { color: rgba(255,255,255,0.22); }
+    .pin-name-input:focus { border-color: var(--accent-blue); }
+    .pin-name-input.shake { animation: shake 0.35s; border-color: var(--accent-red); }
 
     .emoji-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
     .emoji-btn {
-      width: 44px; height: 44px; border-radius: 11px;
-      background: #2c2c2e; border: 1.5px solid transparent;
+      width: 46px; height: 46px; border-radius: 12px;
+      background: var(--bg-card); border: 1.5px solid transparent;
       font-size: 22px; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       transition: border-color 0.15s, background 0.15s;
+      -webkit-tap-highlight-color: transparent;
     }
-    .emoji-btn.selected { border-color: #007aff; background: rgba(0,122,255,0.15); }
+    .emoji-btn.selected { border-color: var(--accent-blue); background: rgba(10,132,255,0.14); }
+    .emoji-btn:active { background: rgba(255,255,255,0.06); }
 
     .coords-hint {
-      font-size: 12px; color: rgba(255,255,255,0.3);
-      text-align: center; margin-bottom: 16px;
+      font-size: 12px; color: var(--text-tertiary);
+      text-align: center; margin-bottom: 18px;
       display: flex; align-items: center; justify-content: center; gap: 5px;
     }
 
     /* ─── Sheet: pin list ─────────────────────────────────────────────────── */
+    .list-sort-bar {
+      display: flex; gap: 0; margin-bottom: 16px;
+      background: var(--bg-card); border-radius: 10px; padding: 2px;
+    }
+    .sort-btn {
+      flex: 1; padding: 7px 4px;
+      border: none; border-radius: 8px; cursor: pointer;
+      font-size: 12px; font-weight: 600; color: var(--text-secondary);
+      background: transparent; transition: background 0.15s, color 0.15s;
+    }
+    .sort-btn.active { background: var(--bg-elevated); color: var(--text-primary); }
+
     .pin-list { max-height: 55vh; overflow-y: auto; }
     .pin-row {
       display: flex; align-items: center; gap: 12px;
-      padding: 13px 0; border-bottom: 1px solid rgba(255,255,255,0.06);
+      padding: 11px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
     }
     .pin-row:last-child { border-bottom: none; }
-    .pin-emoji { font-size: 26px; flex-shrink: 0; }
+
+    /* Colored emoji circle */
+    .pin-emoji-wrap {
+      width: 46px; height: 46px; border-radius: 14px;
+      background: var(--pin-row-color, rgba(10,132,255,0.14));
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .pin-emoji { font-size: 22px; line-height: 1; }
+
     .pin-info  { flex: 1; min-width: 0; }
     .pin-info-name {
-      font-size: 15px; font-weight: 600; color: #fff;
+      font-size: 15px; font-weight: 600; color: var(--text-primary);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .pin-info-meta { font-size: 12px; color: rgba(255,255,255,0.35); display: flex; gap: 8px; margin-top: 2px; }
-    .pin-dist-label { color: #007aff; font-weight: 500; }
-    .pin-actions { display: flex; gap: 2px; flex-shrink: 0; }
-    .btn-navigate { background: none; border: none; font-size: 15px; cursor: pointer; padding: 6px 7px; color: #30d158; }
-    .btn-share    { background: none; border: none; color: #007aff;  font-size: 13px; cursor: pointer; padding: 6px 7px; font-weight: 500; }
-    .btn-delete   { background: none; border: none; color: #ff453a; font-size: 13px; cursor: pointer; padding: 6px 7px; font-weight: 500; }
+    .pin-info-meta {
+      font-size: 12px; color: var(--text-secondary);
+      display: flex; gap: 8px; margin-top: 3px; align-items: center;
+    }
+    .pin-dist-label { color: var(--accent-blue); font-weight: 500; }
 
-    /* ─── Sheet: share ────────────────────────────────────────────────────── */
-    .share-pin-header {
-      display: flex; align-items: center; gap: 12px; margin-bottom: 20px;
+    .pin-actions { display: flex; gap: 0; flex-shrink: 0; }
+    .btn-navigate, .btn-share, .btn-delete {
+      background: none; border: none; cursor: pointer;
+      padding: 8px 9px; border-radius: 10px;
+      font-size: 13px; font-weight: 600;
+      min-width: 44px; min-height: 44px;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s; -webkit-tap-highlight-color: transparent;
     }
-    .share-pin-header .big-emoji { font-size: 36px; }
-    .share-pin-header-name { font-size: 18px; font-weight: 700; color: #fff; }
-    .share-pin-header-sub  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 3px; }
-    .qr-wrap {
-      display: flex; justify-content: center; margin-bottom: 20px;
-    }
-    .qr-wrap canvas { border-radius: 14px; display: block; }
-    .qr-url {
-      font-size: 10px; color: rgba(255,255,255,0.25);
-      text-align: center; word-break: break-all;
-      margin-bottom: 20px; line-height: 1.5;
+    .btn-navigate { color: var(--accent-green); }
+    .btn-share    { color: var(--accent-blue); }
+    .btn-delete   { color: var(--accent-red); }
+    .btn-navigate:active, .btn-share:active, .btn-delete:active { background: rgba(255,255,255,0.06); }
+    .btn-navigate svg, .btn-share svg, .btn-delete svg {
+      width: 18px; height: 18px; stroke: currentColor; fill: none;
+      stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
     }
 
     /* ─── Sheet: info ─────────────────────────────────────────────────────── */
-    .info-row { display: flex; gap: 12px; padding: 11px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .info-row {
+      display: flex; gap: 14px; padding: 13px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
     .info-row:last-child { border-bottom: none; }
-    .info-icon { font-size: 22px; width: 30px; text-align: center; flex-shrink: 0; }
-    .info-text { flex: 1; font-size: 14px; color: rgba(255,255,255,0.65); line-height: 1.55; }
+    .info-icon {
+      width: 36px; height: 36px; border-radius: 10px;
+      background: var(--bg-card);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; flex-shrink: 0;
+    }
+    .info-text { flex: 1; font-size: 14px; color: rgba(255,255,255,0.65); line-height: 1.55; padding-top: 9px; }
 
     /* ─── Sheet: shared pin ───────────────────────────────────────────────── */
     .shared-pin-preview {
       display: flex; align-items: center; gap: 14px;
-      background: #2c2c2e; border-radius: 14px; padding: 16px; margin-bottom: 20px;
+      background: var(--bg-card); border-radius: 16px; padding: 18px; margin-bottom: 20px;
     }
-    .shared-pin-preview .big-emoji { font-size: 40px; }
-    .shared-pin-preview-name { font-size: 18px; font-weight: 700; color: #fff; }
-    .shared-pin-preview-coords { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 4px; }
+    .shared-pin-preview .big-emoji { font-size: 42px; }
+    .shared-pin-preview-name { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+    .shared-pin-preview-coords { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
 
     /* ─── Buttons ─────────────────────────────────────────────────────────── */
     .btn-primary {
-      width: 100%; padding: 15px;
-      background: #007aff; border: none; border-radius: 14px;
+      width: 100%; padding: 16px;
+      background: var(--accent-blue); border: none; border-radius: 15px;
       color: #fff; font-size: 17px; font-weight: 600;
-      cursor: pointer; transition: background 0.15s;
+      cursor: pointer; transition: background 0.15s, transform 0.12s;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
     }
-    .btn-primary:active { background: #0062cc; }
-    .btn-primary.green { background: #30d158; }
-    .btn-primary.green:active { background: #25a244; }
+    .btn-primary:active { background: #0071e3; transform: scale(0.98); }
+    .btn-primary.green { background: var(--accent-green); box-shadow: inset 0 1px 0 rgba(255,255,255,0.15); }
+    .btn-primary.green:active { background: #28c141; }
     .btn-secondary {
-      width: 100%; padding: 15px;
-      background: #2c2c2e; border: none; border-radius: 14px;
-      color: #fff; font-size: 17px; font-weight: 600;
+      width: 100%; padding: 16px;
+      background: var(--bg-card); border: none; border-radius: 15px;
+      color: var(--text-primary); font-size: 17px; font-weight: 600;
       cursor: pointer; margin-top: 10px; transition: background 0.15s;
+      -webkit-tap-highlight-color: transparent;
     }
     .btn-secondary:active { background: #3a3a3c; }
 
     /* ─── Toast ───────────────────────────────────────────────────────────── */
     #toast {
-      position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%) translateY(16px);
-      background: rgba(28,28,30,0.97); backdrop-filter: blur(16px);
+      position: fixed; bottom: 106px; left: 50%;
+      transform: translateX(-50%) translateY(18px);
+      background: rgba(24,24,26,0.97); backdrop-filter: blur(20px);
       border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 13px; padding: 10px 18px;
-      font-size: 13px; font-weight: 500; color: #fff;
+      border-radius: 14px; padding: 11px 20px;
+      font-size: 14px; font-weight: 500; color: var(--text-primary);
       opacity: 0; pointer-events: none;
       transition: opacity 0.22s, transform 0.22s;
       white-space: nowrap; z-index: 40;
+      max-width: calc(100vw - 32px);
     }
     #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-    /* ─── Loading ─────────────────────────────────────────────────────────── */
+    /* ─── Loading screen ──────────────────────────────────────────────────── */
     #loading {
       position: fixed; inset: 0; z-index: 100;
       background: #000;
       display: flex; flex-direction: column;
-      align-items: center; justify-content: center; gap: 16px;
+      align-items: center; justify-content: center; gap: 18px;
       transition: opacity 0.5s;
     }
     #loading.hidden { opacity: 0; pointer-events: none; }
-    #loading-logo { font-size: 34px; font-weight: 800; color: #fff; letter-spacing: -0.8px; }
-    #loading-sub  { font-size: 14px; color: rgba(255,255,255,0.35); }
+    #loading-logo {
+      font-size: 36px; font-weight: 800; color: #fff;
+      letter-spacing: -1px;
+    }
+    #loading-sub { font-size: 14px; color: rgba(255,255,255,0.35); }
     .spinner {
-      width: 24px; height: 24px;
-      border: 2px solid rgba(255,255,255,0.12);
-      border-top-color: #007aff;
+      width: 26px; height: 26px;
+      border: 2px solid rgba(255,255,255,0.1);
+      border-top-color: var(--accent-blue);
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
 
-    @keyframes spin  { to { transform: rotate(360deg); } }
+    /* ─── Keyframes ───────────────────────────────────────────────────────── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse-locating {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.25; }
+    }
+    @keyframes bounce-down {
+      0%, 100% { transform: translateY(0); }
+      50%       { transform: translateY(7px); }
+    }
     @keyframes shake {
       0%,100% { transform: translateX(0); }
       20%     { transform: translateX(-6px); }
@@ -444,11 +663,11 @@
       <span id="app-logo">PinAR</span>
       <div id="top-bar-right">
         <div id="gps-badge">
-          <div id="gps-dot"></div>
+          <div id="gps-dot" class="locating"></div>
           <span id="gps-label">Locating…</span>
         </div>
         <button id="btn-info" aria-label="About">
-          <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke-width="1.8">
             <circle cx="12" cy="12" r="10"/>
             <line x1="12" y1="16" x2="12" y2="12"/>
             <line x1="12" y1="8" x2="12.01" y2="8"/>
@@ -457,22 +676,47 @@
       </div>
     </div>
 
+    <!-- Nav banner: redesigned with chevron + progress bar -->
     <div id="nav-banner">
-      <span id="nav-banner-arrow">↑</span>
-      <span id="nav-banner-emoji"></span>
-      <span id="nav-banner-label">Navigating</span>
-      <span id="nav-banner-name"></span>
-      <span id="nav-banner-dist"></span>
-      <button id="nav-stop-btn" aria-label="Stop navigating">✕</button>
+      <div id="nav-banner-arrow">
+        <svg viewBox="0 0 24 24">
+          <polyline points="18 15 12 9 6 15"/>
+        </svg>
+      </div>
+      <div id="nav-banner-content">
+        <div id="nav-banner-top">
+          <span id="nav-banner-emoji"></span>
+          <span id="nav-banner-name"></span>
+          <span id="nav-banner-label">Navigating</span>
+        </div>
+        <div id="nav-banner-bottom">
+          <span id="nav-banner-dist"></span>
+          <div id="nav-progress-track">
+            <div id="nav-progress-fill"></div>
+          </div>
+        </div>
+      </div>
+      <button id="nav-start-btn" aria-label="Navigate to nearest pin">
+        <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+      <button id="nav-stop-btn" aria-label="Stop navigating">
+        <svg viewBox="0 0 24 24" fill="none">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
     </div>
 
+    <!-- Empty state: improved with title and bouncing arrow -->
     <div id="empty-state">
-      <div class="icon">📍</div>
-      <p>No pins yet.<br>Tap + to drop your first pin.</p>
+      <span class="empty-icon">📍</span>
+      <h3 class="empty-title">No pins yet</h3>
+      <p class="empty-body">Tap the <strong>+</strong> button to save<br>your current location as a pin.</p>
+      <span class="empty-arrow">↓</span>
     </div>
 
+    <!-- Compass: now a floating pill -->
     <div id="compass-strip">
-      <canvas id="compass-canvas" height="68"></canvas>
+      <canvas id="compass-canvas" height="46"></canvas>
     </div>
 
     <div id="toast"></div>
@@ -480,6 +724,8 @@
 
   <!-- ── Tab bar ─────────────────────────────────────────────────────────── -->
   <div id="tab-bar">
+    <div id="tab-indicator"></div>
+
     <button id="tab-ar" class="tab-btn active" aria-label="AR view">
       <svg viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
       <span>AR</span>

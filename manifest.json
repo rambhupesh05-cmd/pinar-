@@ -1,0 +1,11 @@
+{
+  "name": "PinAR",
+  "short_name": "PinAR",
+  "description": "GPS-based AR navigation — drop pins, navigate in real world.",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": []
+}
